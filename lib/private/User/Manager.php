@@ -750,29 +750,30 @@ class Manager extends PublicEmitter implements IUserManager {
 	public function getLastLoggedInUsers(?int $limit = null, int $offset = 0, string $search = ''): array {
 		$connection = \OC::$server->getDatabaseConnection();
 		$queryBuilder = $connection->getQueryBuilder();
-		$queryBuilder->selectDistinct('uid')
-			->from('users', 'u')
-			->leftJoin('u', 'preferences', 'p', $queryBuilder->expr()->andX(
-				$queryBuilder->expr()->eq('p.userid', 'uid'),
-				$queryBuilder->expr()->eq('p.appid', $queryBuilder->expr()->literal('login')),
-				$queryBuilder->expr()->eq('p.configkey', $queryBuilder->expr()->literal('lastLogin')))
-			);
-		if ($search !== '') {
-			$queryBuilder->leftJoin('u', 'preferences', 'p1', $queryBuilder->expr()->andX(
-				$queryBuilder->expr()->eq('p1.userid', 'uid'),
-				$queryBuilder->expr()->eq('p1.appid', $queryBuilder->expr()->literal('settings')),
-				$queryBuilder->expr()->eq('p1.configkey', $queryBuilder->expr()->literal('email')))
-			)
-				// sqlite doesn't like re-using a single named parameter here
-				->where($queryBuilder->expr()->iLike('uid', $queryBuilder->createPositionalParameter('%' . $connection->escapeLikeParameter($search) . '%')))
-				->orWhere($queryBuilder->expr()->iLike('displayname', $queryBuilder->createPositionalParameter('%' . $connection->escapeLikeParameter($search) . '%')))
-				->orWhere($queryBuilder->expr()->iLike('p1.configvalue', $queryBuilder->createPositionalParameter('%' . $connection->escapeLikeParameter($search) . '%'))
-				);
-		}
-		$queryBuilder->orderBy($queryBuilder->func()->lower('p.configvalue'), 'DESC')
-			->addOrderBy('uid_lower', 'ASC')
+		$queryBuilder->select('login.userid')
+			->from('preferences', 'login')
+			->where($queryBuilder->expr()->eq('login.appid', $queryBuilder->expr()->literal('login')))
+			->andWhere($queryBuilder->expr()->eq('login.configkey', $queryBuilder->expr()->literal('lastLogin')))
+			->orderBy('login.configvalue', 'DESC')
 			->setFirstResult($offset)
 			->setMaxResults($limit);
+
+		if ($search === '') {
+			$queryBuilder->addOrderBy($queryBuilder->func()->lower('userid'), 'ASC');
+		} else {
+			$queryBuilder->leftJoin('login', 'preferences', 'email', $queryBuilder->expr()->andX(
+				$queryBuilder->expr()->eq('login.userid', 'email.userid'),
+				$queryBuilder->expr()->eq('email.appid', $queryBuilder->expr()->literal('settings')),
+				$queryBuilder->expr()->eq('email.configkey', $queryBuilder->expr()->literal('email')),
+			));
+			$queryBuilder->join('login', 'users', 'user', $queryBuilder->expr()->eq('login.userid', 'user.uid'));
+			$queryBuilder->andWhere($queryBuilder->expr()->orX(
+				$queryBuilder->expr()->iLike('uid', $queryBuilder->createPositionalParameter('%' . $connection->escapeLikeParameter($search) . '%')),
+				$queryBuilder->expr()->iLike('displayname', $queryBuilder->createPositionalParameter('%' . $connection->escapeLikeParameter($search) . '%')),
+				$queryBuilder->expr()->iLike('email.configvalue', $queryBuilder->createPositionalParameter('%' . $connection->escapeLikeParameter($search) . '%')),
+			));
+			$queryBuilder->addOrderBy('uid_lower', 'ASC');
+		}
 
 		$result = $queryBuilder->executeQuery();
 		/** @var list<string> $uids */
