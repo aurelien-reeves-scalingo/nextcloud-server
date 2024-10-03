@@ -16,6 +16,7 @@ use OCP\ICache;
 use OCP\ICacheFactory;
 use OCP\IConfig;
 use OCP\IUser;
+use OCP\IUserManager;
 use Psr\Log\LoggerInterface;
 use Test\TestCase;
 
@@ -579,7 +580,7 @@ class ManagerTest extends TestCase {
 	}
 
 	public function testCountUsersOnlyDisabled(): void {
-		$manager = \OC::$server->getUserManager();
+		$manager = \OCP\Server::get(IUserManager::class);
 		// count other users in the db before adding our own
 		$countBefore = $manager->countDisabledUsers();
 
@@ -604,7 +605,7 @@ class ManagerTest extends TestCase {
 	}
 
 	public function testCountUsersOnlySeen(): void {
-		$manager = \OC::$server->getUserManager();
+		$manager = \OCP\Server::get(IUserManager::class);
 		// count other users in the db before adding our own
 		$countBefore = $manager->countSeenUsers();
 
@@ -630,7 +631,7 @@ class ManagerTest extends TestCase {
 	}
 
 	public function testCallForSeenUsers(): void {
-		$manager = \OC::$server->getUserManager();
+		$manager = \OCP\Server::get(IUserManager::class);
 		// count other users in the db before adding our own
 		$count = 0;
 		$function = function (IUser $user) use (&$count) {
@@ -664,8 +665,12 @@ class ManagerTest extends TestCase {
 	}
 
 	public function testRecentlyActive(): void {
-		$manager = \OCP\Server::get(IUserManager::class);
 		$config = \OCP\Server::get(IConfig::class);
+		$manager = \OCP\Server::get(IUserManager::class);
+		// Restore backend, otherwise test fail when launching all tests in tests/lib
+		$backend = \OCP\Server::get(Database::class);
+		$manager->clearBackends();
+		$manager->registerBackend($backend);
 
 		// Create some users
 		$now = (string)time();

@@ -742,45 +742,49 @@ class Manager extends PublicEmitter implements IUserManager {
 	/**
 	 * Gets the list of user ids sorted by lastLogin, from most recent to least recent
 	 *
-	 * @param int|null $limit how many users to fetch
+	 * @param int|null $limit how many users to fetch (default: 25, max: 100)
 	 * @param int $offset from which offset to fetch
 	 * @param string $search search users based on search params
 	 * @return list<string> list of user IDs
 	 */
 	public function getLastLoggedInUsers(?int $limit = null, int $offset = 0, string $search = ''): array {
+		// We can't load all users who already logged in
+		$limit = min(100, $limit ?: 25);
+
 		$connection = \OC::$server->getDatabaseConnection();
 		$queryBuilder = $connection->getQueryBuilder();
 		$queryBuilder->select('login.userid')
 			->from('preferences', 'login')
 			->where($queryBuilder->expr()->eq('login.appid', $queryBuilder->expr()->literal('login')))
 			->andWhere($queryBuilder->expr()->eq('login.configkey', $queryBuilder->expr()->literal('lastLogin')))
-			->orderBy('login.configvalue', 'DESC')
 			->setFirstResult($offset)
-			->setMaxResults($limit);
+			->setMaxResults($limit)
+			->orderBy('login.configvalue', 'DESC')
+			->addOrderBy($queryBuilder->func()->lower('login.userid'), 'ASC');
 
 		if ($search === '') {
-			$queryBuilder->addOrderBy($queryBuilder->func()->lower('userid'), 'ASC');
-		} else {
-			$queryBuilder->leftJoin('login', 'preferences', 'email', $queryBuilder->expr()->andX(
-				$queryBuilder->expr()->eq('login.userid', 'email.userid'),
-				$queryBuilder->expr()->eq('email.appid', $queryBuilder->expr()->literal('settings')),
-				$queryBuilder->expr()->eq('email.configkey', $queryBuilder->expr()->literal('email')),
-			));
-			$queryBuilder->join('login', 'users', 'user', $queryBuilder->expr()->eq('login.userid', 'user.uid'));
-			$queryBuilder->andWhere($queryBuilder->expr()->orX(
-				$queryBuilder->expr()->iLike('uid', $queryBuilder->createPositionalParameter('%' . $connection->escapeLikeParameter($search) . '%')),
-				$queryBuilder->expr()->iLike('displayname', $queryBuilder->createPositionalParameter('%' . $connection->escapeLikeParameter($search) . '%')),
-				$queryBuilder->expr()->iLike('email.configvalue', $queryBuilder->createPositionalParameter('%' . $connection->escapeLikeParameter($search) . '%')),
-			));
-			$queryBuilder->addOrderBy('uid_lower', 'ASC');
+			return $queryBuilder
+				->executeQuery()
+				->fetchAll(\PDO::FETCH_COLUMN);
 		}
 
-		$result = $queryBuilder->executeQuery();
-		/** @var list<string> $uids */
-		$uids = $result->fetchAll(\PDO::FETCH_COLUMN);
-		$result->closeCursor();
+		$queryBuilder->leftJoin('login', 'preferences', 'email', $queryBuilder->expr()->andX(
+			$queryBuilder->expr()->eq('login.userid', 'email.userid'),
+			$queryBuilder->expr()->eq('email.appid', $queryBuilder->expr()->literal('settings')),
+			$queryBuilder->expr()->eq('email.configkey', $queryBuilder->expr()->literal('email')),
+		));
 
-		return $uids;
+		$displayNameMatches = $this->searchDisplayName($search);
+		$matchedUids = array_map(static fn (IUser $u): string => $u->getUID(), $displayNameMatches);
+
+		return $queryBuilder
+			->andWhere($queryBuilder->expr()->orX(
+				$queryBuilder->expr()->iLike('login.userid', $queryBuilder->createPositionalParameter('%' . $connection->escapeLikeParameter($search) . '%')),
+				$queryBuilder->expr()->iLike('email.configvalue', $queryBuilder->createPositionalParameter('%' . $connection->escapeLikeParameter($search) . '%')),
+				$queryBuilder->expr()->in('login.userid', $queryBuilder->createNamedParameter($matchedUids, IQueryBuilder::PARAM_STR_ARRAY)),
+			))
+			->executeQuery()
+			->fetchAll(\PDO::FETCH_COLUMN);
 	}
 
 	private function verifyUid(string $uid, bool $checkDataDirectory = false): bool {
