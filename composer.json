@@ -73,6 +73,11 @@
 		"bamarni-bin": {
 			"bin-links": true,
 			"forward-command": false
+		},
+		"paas": {
+			"compile": [
+				"git submodule update --init"
+			]
 		}
 	}
 }
